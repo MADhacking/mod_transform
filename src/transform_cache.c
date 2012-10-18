@@ -44,7 +44,7 @@ const char *transform_cache_add(cmd_parms * cmd, void *cfg,
 {
     svr_cfg *conf = ap_get_module_config(cmd->server->module_config,
                                          &transform_module);
-    xsltStylesheetPtr xslt = xsltParseStylesheetFile(path);
+    xsltStylesheetPtr xslt = xsltParseStylesheetFile((xmlChar *) path);
     if (url && path && xslt) {
         transform_xslt_cache *me =
             apr_palloc(cmd->pool, sizeof(transform_xslt_cache));
