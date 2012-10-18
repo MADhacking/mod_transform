@@ -297,8 +297,7 @@ xmlParserInputBufferPtr transform_get_input(const char *URI,
     if(f == NULL)
         return NULL;
 
-    dconf = ap_get_module_config(f->r->per_dir_config,
-                                          &transform_module);
+    dconf = ap_get_module_config(f->r->per_dir_config, &transform_module);
 
     if (URI == NULL)
         return NULL;

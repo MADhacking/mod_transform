@@ -320,10 +320,33 @@ static apr_status_t transform_filter_init(ap_filter_t * f)
     return APR_SUCCESS;
 }
 
+static unsigned char is_recursive_request(ap_filter_t *filter)
+{
+	// Loop through the previous requests in the chain.  If one of them is
+	// another XSLT transform then this is a recursive query.
+	ap_filter_t *temp_filter = filter->next;
+	while (temp_filter)
+	{
+		// ap_log_rerror(APLOG_MARK, APLOG_INFO, 0, filter->r, "mod_transform: output_filter: handler: %s", temp_filter->frec->name);
+
+		if (strcasecmp(temp_filter->frec->name, APACHEFS_FILTER_NAME) == 0)
+			return TRUE;
+		temp_filter = temp_filter->next;
+	};
+
+    //if (!ap_is_initial_req(req_rec))
+    //	return TRUE;
+
+    return FALSE;
+}
+
 static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
 {
-    /* Only work on main requests, not sub-requests */
-    if (!ap_is_initial_req(f->r))
+	// Check to see if the PREVENT_RECURSION flag is set and if we are part of a recursive
+	// request.  If so we need to remove ourselves from the filter chain and simply pass
+	// the bucket brigade to the next filter in the chain.
+	dir_cfg *dconf = ap_get_module_config(f->r->per_dir_config, &transform_module);
+	if ((dconf->opts & PREVENT_RECURSION) && is_recursive_request(f))
     {
     	ap_remove_output_filter(f);
     	return ap_pass_brigade(f->next, bb);
@@ -348,24 +371,29 @@ static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
         }
     }
 
+    // If we are using HTTP1.1 and we are not part of a chain then we
+    // should use chunked encoding.
     if ((f->r->proto_num >= 1001) && !f->r->main && !f->r->prev)
         f->r->chunked = 1;
 
-    for (b = APR_BRIGADE_FIRST(bb);
-         b != APR_BRIGADE_SENTINEL(bb); b = APR_BUCKET_NEXT(b)) {
-        if (APR_BUCKET_IS_EOS(b)) {
+    for (b = APR_BRIGADE_FIRST(bb); b != APR_BRIGADE_SENTINEL(bb); b = APR_BUCKET_NEXT(b))
+    {
+        if (APR_BUCKET_IS_EOS(b))
+        {
             if (ctxt) {         /* done reading the file. run the transform now */
                 xmlParseChunk(ctxt, buf, 0, 1);
                 ret = transform_run(f, ctxt->myDoc);
                 xmlFreeParserCtxt(ctxt);
             }
         }
-        else if (apr_bucket_read(b, &buf, &bytes, APR_BLOCK_READ)
-                 == APR_SUCCESS) {
-            if (ctxt) {
+        else if (apr_bucket_read(b, &buf, &bytes, APR_BLOCK_READ) == APR_SUCCESS)
+        {
+            if (ctxt)
+            {
                 xmlParseChunk(ctxt, buf, bytes, 0);
             }
-            else {
+            else
+            {
                 f->ctx = ctxt = xmlCreatePushParserCtxt(0, 0, buf, bytes, 0);
                 xmlCtxtUseOptions(ctxt, XML_PARSE_NOENT | XML_PARSE_NOCDATA);
                 ctxt->directory = xmlParserGetDirectory(f->r->filename);
@@ -502,6 +530,9 @@ static const char *add_opts(cmd_parms * cmd, void *d, const char *optstr)
         }
         else if (!strcasecmp(w, "XIncludes")) {
             option = XINCLUDES;
+        }
+        else if (!strcasecmp(w, "PreventRecursion")) {
+            option = PREVENT_RECURSION;
         }
         else if (!strcasecmp(w, "None")) {
             if (action != '\0') {
