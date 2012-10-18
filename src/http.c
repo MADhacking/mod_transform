@@ -22,6 +22,7 @@
 
 #include <mod_transform.h>
 
+#include <apreq2/apreq_module.h>
 #include <apreq2/apreq_module_apache2.h>
 
 #include <httpd.h>
