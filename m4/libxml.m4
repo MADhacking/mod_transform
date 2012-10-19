@@ -1,13 +1,11 @@
 # Configure paths for LIBXML2
 # Mike Hommey 2004-06-19
-# use CPPFLAGS instead of CFLAGS
-# Toshio Kuratomi 2001-04-21
 # Adapted from:
 # Configure paths for GLIB
 # Owen Taylor     97-11-3
 
 dnl AM_PATH_XML2([MINIMUM-VERSION, [ACTION-IF-FOUND [, ACTION-IF-NOT-FOUND]]])
-dnl Test for XML, and define XML_CPPFLAGS and XML_LIBS
+dnl Test for XML, and define XML_CFLAGS and XML_LIBS
 dnl
 AC_DEFUN([AM_PATH_XML2],[ 
 AC_ARG_WITH(xml-prefix,
@@ -40,7 +38,7 @@ AC_ARG_ENABLE(xmltest,
   if test "$XML2_CONFIG" = "no" ; then
     no_xml=yes
   else
-    XML_CPPFLAGS=`$XML2_CONFIG $xml_config_args --cflags`
+    XML_CFLAGS=`$XML2_CONFIG $xml_config_args --cflags`
     XML_LIBS=`$XML2_CONFIG $xml_config_args --libs`
     xml_config_major_version=`$XML2_CONFIG $xml_config_args --version | \
            sed 's/\([[0-9]]*\).\([[0-9]]*\).\([[0-9]]*\)/\1/'`
@@ -49,9 +47,9 @@ AC_ARG_ENABLE(xmltest,
     xml_config_micro_version=`$XML2_CONFIG $xml_config_args --version | \
            sed 's/\([[0-9]]*\).\([[0-9]]*\).\([[0-9]]*\)/\3/'`
     if test "x$enable_xmltest" = "xyes" ; then
-      ac_save_CPPFLAGS="$CPPFLAGS"
+      ac_save_CFLAGS="$CFLAGS"
       ac_save_LIBS="$LIBS"
-      CPPFLAGS="$CPPFLAGS $XML_CPPFLAGS"
+      CFLAGS="$CFLAGS $XML_CFLAGS"
       LIBS="$XML_LIBS $LIBS"
 dnl
 dnl Now check if the installed libxml is sufficiently new.
@@ -134,7 +132,7 @@ main()
   return 1;
 }
 ],, no_xml=yes,[echo $ac_n "cross compiling; assumed OK... $ac_c"])
-       CPPFLAGS="$ac_save_CPPFLAGS"
+       CFLAGS="$ac_save_CFLAGS"
        LIBS="$ac_save_LIBS"
      fi
   fi
@@ -154,7 +152,7 @@ main()
         :
        else
           echo "*** Could not run libxml test program, checking why..."
-          CPPFLAGS="$CPPFLAGS $XML_CPPFLAGS"
+          CFLAGS="$CFLAGS $XML_CFLAGS"
           LIBS="$LIBS $XML_LIBS"
           AC_TRY_LINK([
 #include <libxml/xmlversion.h>
@@ -173,20 +171,20 @@ main()
           echo "*** exact error that occured. This usually means LIBXML was incorrectly installed"
           echo "*** or that you have moved LIBXML since it was installed. In the latter case, you"
           echo "*** may want to edit the xml2-config script: $XML2_CONFIG" ])
-          CPPFLAGS="$ac_save_CPPFLAGS"
+          CFLAGS="$ac_save_CFLAGS"
           LIBS="$ac_save_LIBS"
        fi
      fi
 
-     XML_CPPFLAGS=""
+     XML_CFLAGS=""
      XML_LIBS=""
      ifelse([$3], , :, [$3])
   fi
-  AC_SUBST(XML_CPPFLAGS)
+  AC_SUBST(XML_CFLAGS)
   AC_SUBST(XML_LIBS)
   save_CFLAGS=$CFLAGS
   save_LDFLAGS=$LDFLAGS
-  CFLAGS="$XML_CPPFLAGS $CFLAGS"
+  CFLAGS="$XML_CFLAGS $CFLAGS"
   LDFLAGS="$XML_LIBS $LDFLAGS"
   AC_CHECK_LIB(xml2, xmlGetGlobalState,
             AC_DEFINE(HAVE_LIBXML_THREADS,, [A version of libxml2 with multithreading support is being used]))
