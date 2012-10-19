@@ -23,7 +23,6 @@ AC_PROG_CPP
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
-AC_PROG_RANLIB
 AC_PROG_MKDIR_P
 AM_PROG_CC_C_O 
 
@@ -97,5 +96,6 @@ echo "---"
 echo "Configuration summary for mod_transform"
 echo ""
 echo "   * Apache Modules Directory:    $AP_LIBEXECDIR"
+echo "   * Apache Module CFLAGS:        $MODULE_CFLAGS"
 echo ""
 echo "---"
