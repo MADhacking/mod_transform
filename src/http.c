@@ -1,10 +1,11 @@
 /**
  *    Copyright (c) 2007 Christian Parpart
- *    Authors:    Christian Parpart <trapni at gentoo.org>
+ *
+ *    Authors:    Christian Parpart		<trapni at gentoo.org>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; either version 2 of the License, or
+ *  the Free Software Foundation; either version 3 of the License, or
  *  (at your option) any later version.
  *
  *  This program is distributed in the hope that it will be useful,
@@ -50,8 +51,10 @@ ap_filter_t *FFilter = NULL;
  * 
  * returns the remote IP address of the connecting client
  */
-static void httpRemoteIP(xmlXPathParserContextPtr ctxt, int nargs) {
-	if (nargs != 0) {
+static void httpRemoteIP(xmlXPathParserContextPtr ctxt, int nargs)
+{
+	if (nargs != 0)
+	{
 		xmlXPathSetArityError(ctxt);
 		return;
 	}
@@ -63,8 +66,10 @@ static void httpRemoteIP(xmlXPathParserContextPtr ctxt, int nargs) {
  *
  * returns the remote TCP port number of the connecting client
  */
-static void httpRemotePort(xmlXPathParserContextPtr ctxt, int nargs) {
-	if (nargs != 0) {
+static void httpRemotePort(xmlXPathParserContextPtr ctxt, int nargs)
+{
+	if (nargs != 0)
+	{
 		xmlXPathSetArityError(ctxt);
 		return;
 	}
@@ -76,11 +81,13 @@ static void httpRemotePort(xmlXPathParserContextPtr ctxt, int nargs) {
  *
  * returns any kind of HTTP request header identified by \p name.
  */
-static void httpRequestHeader(xmlXPathParserContextPtr ctxt, int nargs) {
+static void httpRequestHeader(xmlXPathParserContextPtr ctxt, int nargs)
+{
 	xmlChar *name;
 	xmlChar *value;
 
-	if (nargs != 1) {
+	if (nargs != 1)
+	{
 		xmlXPathSetArityError(ctxt);
 		return;
 	}
@@ -102,23 +109,24 @@ static void httpRequestHeader(xmlXPathParserContextPtr ctxt, int nargs) {
  *
  * \note GET precedes POST arguments.
  */
-static void httpGet(xmlXPathParserContextPtr ctxt, int nargs) {
+static void httpGet(xmlXPathParserContextPtr ctxt, int nargs)
+{
 	xmlChar *key;
 	xmlChar *value = NULL;
 
-	if (nargs != 1) {
+	if (nargs != 1)
+	{
 		xmlXPathSetArityError(ctxt);
 		return;
 	}
 
 	key = xmlXPathPopString(ctxt);
 
-	if (FGetArgs) {
+	if (FGetArgs)
 		value = (xmlChar *)apr_table_get(FGetArgs, (const char *)key);
-	}
-	if (!value && FPostArgs) {
+
+	if (!value && FPostArgs)
 		value = (xmlChar *)apr_table_get(FPostArgs, (const char *)key);
-	}
 
 	if (value)
 		value = xmlStrdup(value);
@@ -130,56 +138,59 @@ static void httpGet(xmlXPathParserContextPtr ctxt, int nargs) {
 /* }}} */
 
 /* {{{ mod_transform hooks */
-static void child_init(apr_pool_t *p, server_rec *s) {
+static void child_init(apr_pool_t *p, server_rec *s)
+{
 	xsltRegisterExtModuleFunction((const xmlChar *)"get", (const xmlChar *)HTTP_NS, httpGet);
 	xsltRegisterExtModuleFunction((const xmlChar *)"request-header", (const xmlChar *)HTTP_NS, httpRequestHeader);
 	xsltRegisterExtModuleFunction((const xmlChar *)"remote-ip", (const xmlChar *)HTTP_NS, httpRemoteIP);
 	xsltRegisterExtModuleFunction((const xmlChar *)"remote-port", (const xmlChar *)HTTP_NS, httpRemotePort);
 }
 
-static void filter_init(ap_filter_t *f) {
-	apreq_handle_apache2(f->r); /* XXX for future use... most probabely */
+static void filter_init(ap_filter_t *f)
+{
+	apreq_handle_apache2(f->r); /* XXX for future use... most probably */
 }
 
 #ifdef _DEBUG
-static int dump_table(void *data, const char *key, const char *value) {
-	struct ap_filter_t *f = (struct ap_filter_t *)data;
+	static int dump_table(void *data, const char *key, const char *value)
+	{
+		struct ap_filter_t *f = (struct ap_filter_t *)data;
 
-	ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "(%s)=(%s)", key, value);
+		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "(%s)=(%s)", key, value);
 
-	return 1;
-}
+		return 1;
+	}
 #endif
 
-static void transform_run_begin(ap_filter_t *f) {
+static void transform_run_begin(ap_filter_t *f)
+{
 	apreq_handle_t *apreq;
 
 	apreq = apreq_handle_apache2(f->r);
 
 	apreq_args(apreq, &FGetArgs);
 
-#ifdef _DEBUG
-	if (FGetArgs != NULL) {
-		apr_table_do(&dump_table, f, FGetArgs, NULL);
-	} else {
-		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "%s", "no GET args passed.");
-	}
-#endif
+	#ifdef _DEBUG
+		if (FGetArgs != NULL)
+			apr_table_do(&dump_table, f, FGetArgs, NULL);
+		else
+			ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "%s", "no GET args passed.");
+	#endif
 
 	apreq_body(apreq, &FPostArgs);
 
-#ifdef _DEBUG
-	if (FPostArgs != NULL) {
-		apr_table_do(&dump_table, f, FPostArgs, NULL);
-	} else {
-		ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "%s", "no POST args passed.");
-	}
-#endif
+	#ifdef _DEBUG
+		if (FPostArgs != NULL)
+			apr_table_do(&dump_table, f, FPostArgs, NULL);
+		else
+			ap_log_rerror(APLOG_MARK, APLOG_DEBUG, APR_SUCCESS, f->r, "%s", "no POST args passed.");
+	#endif
 
 	FFilter = f;
 }
 
-static void transform_run_end(ap_filter_t *f) {
+static void transform_run_end(ap_filter_t *f)
+{
 	FGetArgs = NULL;
 	FPostArgs = NULL;
 	FFilter = NULL;
@@ -187,7 +198,8 @@ static void transform_run_end(ap_filter_t *f) {
 /* }}} */
 
 /* {{{ mod_transform plugin entry table */
-mod_transform_plugin_t http_plugin = {
+mod_transform_plugin_t http_plugin =
+{
 	NULL, /* &plugin_init, */
 	NULL, /* &post_config, */
 	&child_init,
