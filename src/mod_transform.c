@@ -34,8 +34,8 @@
 #include <apr_dso.h>
 #include <ctype.h>
 
-/* Call-back functions used to report errors during transform */
-static void transform_error_cb(void *ctx, const char *prefix, const char *msg, ...)
+/* Call-backs function used to report errors during transform */
+static void transform_error_xml_cb(void *ctx, const char *msg, ...)
 {
     va_list args;
     char *fmsg;
@@ -43,17 +43,18 @@ static void transform_error_cb(void *ctx, const char *prefix, const char *msg, .
     va_start(args, msg);
     fmsg = apr_pvsprintf(f->r->pool, msg, args);
     va_end(args);
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "mod_transform::%s: %s", prefix, fmsg);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "mod_transform::libxml: %s", fmsg);
 }
 
 static void transform_error_xslt_cb(void *ctx, const char *msg, ...)
 {
-	transform_error_cb(ctx, "libxslt", msg);
-}
-
-static void transform_error_xml_cb(void *ctx, const char *msg, ...)
-{
-	transform_error_cb(ctx, "libxml2", msg);
+    va_list args;
+    char *fmsg;
+    ap_filter_t *f = (ap_filter_t *) ctx;
+    va_start(args, msg);
+    fmsg = apr_pvsprintf(f->r->pool, msg, args);
+    va_end(args);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "mod_transform::libxslt: %s", fmsg);
 }
 
 static apr_status_t pass_failure(ap_filter_t * filter, const char *msg)
@@ -107,7 +108,7 @@ static void transformApacheGetFunction (xmlXPathParserContextPtr ctxt, int nargs
             char *query_string;
             char *strtok_state;
        
-            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Requesting get arg: %s", variable);
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Requesting Get Aarg: %s", variable);
 
             query_string = apr_pstrdup(r->pool, r->args);
 
