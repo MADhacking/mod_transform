@@ -23,15 +23,19 @@
  *  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
  */
 
-#include "mod_depends.h"
 #include "mod_transform.h"
+#define HAVE_MOD_DEPENDS 0
+#if HAVE_MOD_DEPENDS
+#include "mod_depends.h"
+#endif
 #include "mod_transform_private.h"
 #include <libxslt/extensions.h>
 #include <libxml/xpathInternals.h>
 #include <apr_dso.h>
 #include <ctype.h>
 
-static void transform_error_cb(void *ctx, const char *msg, ...)
+/* Call-back functions used to report errors during transform */
+static void transform_error_cb(void *ctx, const char *prefix, const char *msg, ...)
 {
     va_list args;
     char *fmsg;
@@ -39,15 +43,22 @@ static void transform_error_cb(void *ctx, const char *msg, ...)
     va_start(args, msg);
     fmsg = apr_pvsprintf(f->r->pool, msg, args);
     va_end(args);
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r,
-                  "mod_transform::libxml2_error: %s", fmsg);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "mod_transform::%s: %s", prefix, fmsg);
 }
 
-static apr_status_t pass_failure(ap_filter_t * filter, const char *msg,
-                                 transform_notes * notes)
+static void transform_error_xslt_cb(void *ctx, const char *msg, ...)
 {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, filter->r, "mod_transform: %s",
-                  msg);
+	transform_error_cb(ctx, "libxslt", msg);
+}
+
+static void transform_error_xml_cb(void *ctx, const char *msg, ...)
+{
+	transform_error_cb(ctx, "libxml2", msg);
+}
+
+static apr_status_t pass_failure(ap_filter_t * filter, const char *msg)
+{
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, filter->r, "mod_transform: %s", msg);
     return HTTP_INTERNAL_SERVER_ERROR;
 }
 
@@ -57,10 +68,12 @@ static xmlNodePtr find_stylesheet_node(xmlDocPtr doc)
 {
     xmlNodePtr child;
     child = doc->children;
-    while ((child != NULL) && (child->type != XML_ELEMENT_NODE)) {
-        if ((child->type == XML_PI_NODE) && 
-            (xmlStrEqual(child->name, BAD_CAST "xml-stylesheet"))) {
-            if (child->content != NULL) {
+    while ((child != NULL) && (child->type != XML_ELEMENT_NODE))
+    {
+        if ((child->type == XML_PI_NODE) && (xmlStrEqual(child->name, BAD_CAST "xml-stylesheet")))
+        {
+            if (child->content != NULL)
+            {
                 return child;
             }
         }
@@ -69,71 +82,90 @@ static xmlNodePtr find_stylesheet_node(xmlDocPtr doc)
     return NULL;
 }
 
+/* Implementation of apache:get XSL extension function */
 static void transformApacheGetFunction (xmlXPathParserContextPtr ctxt, int nargs)
 {
-    if (nargs != 1) {
+    if (nargs != 1)
+    {
         xmlXPathSetArityError(ctxt);
         return;
     }
 
-    if (ctxt->context->userData) {
+    if (ctxt->context->userData)
+    {
         xmlChar *variable;
         request_rec *r = ctxt->context->userData;
         variable = xmlXPathPopString(ctxt);
 
-        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r,
-            "mod_transform: Warning, Using deprecated XPath HTTP get() function! Fix your XSLT!");
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, r, "mod_transform: Warning, Using deprecated XPath HTTP get() function! Fix your XSLT!");
 
-        if (r->args) {
+        if (r->args)
+        {
             char found = 0;
             char *key;
             char *value;
             char *query_string;
             char *strtok_state;
        
-            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Requesting Get Aarg: %s", variable);
+            ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Requesting get arg: %s", variable);
 
             query_string = apr_pstrdup(r->pool, r->args);
 
 		    key = apr_strtok(query_string, "&", &strtok_state);
-		    while (key) {
+		    while (key)
+		    {
 		        value = strchr(key, '=');
-		        if (value) {
+		        if (value)
+		        {
 		            *value = '\0';      /* Split the string in two */
 		            value++;            /* Skip passed the = */
 		        }
-		        else {
+		        else
+		        {
 		            value = "1";
 		        }
 		        ap_unescape_url(key);
                 // Is this the parameter we want?
-                if (apr_strnatcmp((char *)variable,key)==0) {
+                if (apr_strnatcmp((char *)variable,key) == 0)
+                {
                     ap_unescape_url(value);
-                    xmlXPathReturnString(ctxt, xmlStrdup((xmlChar *)value));
+                    xmlXPathReturnString(ctxt, xmlStrdup((xmlChar *) value));
                     found = 1;
-                    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
-                        "Found query arg: %s = %s", key, value);
+                    ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "Found query arg: %s = %s", key, value);
                     break;
-                } else {
+                }
+                else
+                {
     		        key = apr_strtok(NULL, "&", &strtok_state);
                 }
 		    }
-            if (!found) {
+            if (!found)
+            {
                 xmlXPathReturnEmptyString(ctxt);
             }
-        } else { // No query
+        }
+        else
+        { // No query
             xmlXPathReturnEmptyString(ctxt);
         }
-        if (variable) {
+        if (variable)
+        {
             xmlFree(variable);
         }
-    } else { // no request_rec bail
+    }
+    else
+    { // no request_rec bail
         xmlXPathSetError(ctxt, XPATH_INVALID_CTXT);
     }
 }
 
+/* Function to perform the actual transform, called by transform_filter() below */
 static apr_status_t transform_run(ap_filter_t * f, xmlDocPtr doc)
 {
+	// If we didn't get a pointer to the XML doc then this can't work.
+    if (!doc)
+        return pass_failure(f, "XSLT: Couldn't parse XML Document");
+
     size_t length;
     transform_xmlio_output_ctx output_ctx;
     int stylesheet_is_cached = 0;
@@ -144,60 +176,76 @@ static apr_status_t transform_run(ap_filter_t * f, xmlDocPtr doc)
     xmlParserInputBufferCreateFilenameFunc orig;
     xsltTransformContextPtr tcontext;
     
-    transform_notes *notes =
-        ap_get_module_config(f->r->request_config, &transform_module);
-    dir_cfg *dconf = ap_get_module_config(f->r->per_dir_config,
-                                          &transform_module);
-    svr_cfg *sconf = ap_get_module_config(f->r->server->module_config,
-                                          &transform_module);
+    // Get the transform notes for this request and the configurations for the directory and server.
+    transform_notes *notes = ap_get_module_config(f->r->request_config, &transform_module);
+    dir_cfg *dconf = ap_get_module_config(f->r->per_dir_config, &transform_module);
+    svr_cfg *sconf = ap_get_module_config(f->r->server->module_config, &transform_module);
 
-    if (!doc) {
-        return pass_failure(f, "XSLT: Couldn't parse XML Document", notes);
-    }
-
+    // Register our input function (defined in transform_io.c) and store the original.
     orig = xmlParserInputBufferCreateFilenameDefault(transform_get_input);
 
-    if (dconf->opts & XINCLUDES) {
-        xmlXIncludeProcessFlags(doc,
-                                XML_PARSE_RECOVER | XML_PARSE_XINCLUDE |
-                                XML_PARSE_NONET |  XSLT_PARSE_OPTIONS);
+    // If XInclude is enabled then set appropriate processing options.
+    if (dconf->opts & XINCLUDES)
+    {
+        xmlXIncludeProcessFlags(doc, XML_PARSE_RECOVER | XML_PARSE_XINCLUDE |
+        							 XML_PARSE_NONET   | XSLT_PARSE_OPTIONS);
     }
 
-    if (ap_is_initial_req(f->r) && notes->xslt) {
-        if (transform = transform_cache_get(sconf, notes->xslt), transform) {
+    // If this is a main request (not a sub-request) and the notes specify an XSLT file...
+    if (ap_is_initial_req(f->r) && notes->xslt)
+    {
+    	// ...try to load it from the transform cache...
+        if (transform = transform_cache_get(sconf, notes->xslt), transform)
+        {
             stylesheet_is_cached = 1;
         }
-        else {
+        else
+        {
+        	// ...load it from the file.
             transform = xsltParseStylesheetFile((xmlChar *) notes->xslt);
         }
     }
-    else if(dconf->xslt != NULL) {
-        if(transform = transform_cache_get(sconf, dconf->xslt), transform) {
+    // This is either a sub-request OR the notes do not specify an XSLT file...
+    else if (dconf->xslt != NULL)
+    {
+    	// ...try to load it from the transform cache...
+        if (transform = transform_cache_get(sconf, dconf->xslt), transform)
+        {
             stylesheet_is_cached = 1;
         }
-        else {
+        else
+        {
+        	// ...load it from the file.
             transform = xsltParseStylesheetFile((xmlChar *) dconf->xslt);
         }
     }
-    else {
+    // This is either a sub-request OR the notes AND the directory config do not specify an XSLT file...
+    else
+    {
+    	// ...search for the a PI specifying a transform...
         pi_node = find_stylesheet_node(doc);
-        if(pi_node == NULL && dconf->default_xslt != NULL){
+        if (pi_node == NULL && dconf->default_xslt != NULL)
+        {
             transform = xsltParseStylesheetFile((xmlChar *) dconf->default_xslt);
         }
-        else if(pi_node == NULL) {
+        else if(pi_node == NULL)
+        {
             /* no node was found, plus no default. */
-            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, 
-                          "mod_transform: XSL not named in XML and No Default XSLT set");
+            ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, f->r, "mod_transform: XSL not named in XML and No Default XSLT set");
             transform = NULL;
         }
-        else {
+        else
+        {
             transform = xsltLoadStylesheetPI(doc);        
         }
     }
 
-    if (!transform) {
+    // If we haven't managed to create an XSL transform yet then we've failed.  Reset the original
+    // XML parser input function, indicate the error and quit processing.
+    if (!transform)
+    {
         xmlParserInputBufferCreateFilenameDefault(orig);
-        return pass_failure(f, "XSLT: Loading of the XSLT File has failed", notes);
+        return pass_failure(f, "XSLT: Loading of the XSLT File has failed");
     }
 
     /* mod_transform plugin hook into transform_run: "begin" */
@@ -211,69 +259,73 @@ static apr_status_t transform_run(ap_filter_t * f, xmlDocPtr doc)
         }
     }
 
-    // create a new transform context
-    tcontext = xsltNewTransformContext (transform, doc);
+    // Create a new transform context
+    tcontext = xsltNewTransformContext(transform, doc);
+
     // Allow XPath functions to have access to request_rec
     tcontext->xpathCtxt->userData = (void *)f->r;
 
-    /*if (dconf->opts & GETVARS) {
+    /*if (dconf->opts & GETVARS)
+    {
     	getvars = parse_querystring(f->r);
-    } else {
+    }
+    else
+    {
     	getvars = NULL;
     }*/
 
+    // Apply the XSLT transform to the XML document.
     result = xsltApplyStylesheetUser(transform, doc, NULL, NULL, NULL, tcontext);
-    // free the transform context
+
+    // Free the transform context
 	xsltFreeTransformContext(tcontext);
 
-    if (!result) {
-        if (!stylesheet_is_cached) {
+	// If we didn't get a result then we need to report a problem.  We also need to free some
+	// stuff and restore the original XML input function.
+    if (!result)
+    {
+        if (!stylesheet_is_cached)
+        {
             xsltFreeStylesheet(transform);
         }
         xmlParserInputBufferCreateFilenameDefault(orig);
-        return pass_failure(f, "XSLT: Apply Stylesheet has Failed.", notes);
+        return pass_failure(f, "XSLT: Failed to apply stylesheet.");
     }
 
-    if (transform->mediaType) {
+    if (transform->mediaType)
+    {
         /**
          * Note: If the XSLT We are using doesn't have an encoding, 
          *       We will use the server default. 
          */
-        if (transform->encoding) {
-            ap_set_content_type(f->r,
-                                apr_psprintf(f->r->pool, "%s; charset=%s",
-                                             transform->mediaType,
-                                             transform->encoding));
+        if (transform->encoding)
+        {
+            ap_set_content_type(f->r, apr_psprintf(f->r->pool, "%s; charset=%s", transform->mediaType, transform->encoding));
         }
-        else if (doc->encoding) {
-            ap_set_content_type(f->r,
-                                apr_psprintf(f->r->pool, "%s; charset=%s",
-                                             transform->mediaType,
-                                             doc->encoding));
+        else if (doc->encoding)
+        {
+            ap_set_content_type(f->r, apr_psprintf(f->r->pool, "%s; charset=%s", transform->mediaType, doc->encoding));
         }
-        else {
-            ap_set_content_type(f->r,
-                                apr_pstrdup(f->r->pool,
-                                            (char *) transform->mediaType));
+        else
+        {
+            ap_set_content_type(f->r, apr_pstrdup(f->r->pool, (char *) transform->mediaType));
         }
     }
-    else if (transform->method) {
-        if (!strcmp((char *) transform->method, "html")) {
+    else if (transform->method)
+    {
+        if (!strcmp((char *) transform->method, "html"))
+        {
             ap_set_content_type(f->r, apr_pstrdup(f->r->pool, "text/html"));
         }
     }
-    else {
-        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, f->r,
-                      "mod_transform: Warning, no content type was set! Fix your XSLT!");
+    else
+    {
+        ap_log_rerror(APLOG_MARK, APLOG_WARNING, 0, f->r, "mod_transform: Warning, no content type was set! Fix your XSLT!");
     }
 
     output_ctx.next = f->next;
-    output_ctx.bb = apr_brigade_create(f->r->pool,
-                                       apr_bucket_alloc_create(f->r->pool));
-    output =
-        xmlOutputBufferCreateIO(&transform_xmlio_output_write,
-                                &transform_xmlio_output_close, &output_ctx,
-                                0);
+    output_ctx.bb = apr_brigade_create(f->r->pool, apr_bucket_alloc_create(f->r->pool));
+    output = xmlOutputBufferCreateIO(&transform_xmlio_output_write, &transform_xmlio_output_close, &output_ctx, 0);
     length = xsltSaveResultTo(output, result, transform);
     if (!f->r->chunked)
         ap_set_content_length(f->r, length);
@@ -301,10 +353,10 @@ static apr_status_t transform_run(ap_filter_t * f, xmlDocPtr doc)
     return APR_SUCCESS;
 }
 
+/* Entry point for filter initialisation */
 static apr_status_t transform_filter_init(ap_filter_t * f)
 {
-    svr_cfg *sconf = ap_get_module_config(f->r->server->module_config,
-        &transform_module);
+    svr_cfg *sconf = ap_get_module_config(f->r->server->module_config, &transform_module);
 
     /* mod_transform plugin hook into filter_init */
     {
@@ -320,6 +372,7 @@ static apr_status_t transform_filter_init(ap_filter_t * f)
     return APR_SUCCESS;
 }
 
+/* Function to determine if this is a recursive request */
 static unsigned char is_recursive_request(ap_filter_t *filter)
 {
 	// Loop through the previous requests in the chain.  If one of them is
@@ -327,19 +380,16 @@ static unsigned char is_recursive_request(ap_filter_t *filter)
 	ap_filter_t *temp_filter = filter->next;
 	while (temp_filter)
 	{
-		// ap_log_rerror(APLOG_MARK, APLOG_INFO, 0, filter->r, "mod_transform: output_filter: handler: %s", temp_filter->frec->name);
-
 		if (strcasecmp(temp_filter->frec->name, APACHEFS_FILTER_NAME) == 0)
 			return TRUE;
+
 		temp_filter = temp_filter->next;
 	};
-
-    //if (!ap_is_initial_req(req_rec))
-    //	return TRUE;
 
     return FALSE;
 }
 
+/* Entry point for filter execution */
 static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
 {
 	// Check to see if the PREVENT_RECURSION flag is set and if we are part of a recursive
@@ -357,17 +407,25 @@ static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
     apr_size_t bytes = 0;
     xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) f->ctx;
     apr_status_t ret = APR_SUCCESS;
-    void *orig_error_cb = xmlGenericErrorContext;
-    xmlGenericErrorFunc orig_error_func = xmlGenericError;
 
-    xmlSetGenericErrorFunc((void *) f, transform_error_cb);
+	// Set XML and XSLT error functions (and store originals for later restore).
+    void *orig_xml_error_cb = xmlGenericErrorContext;
+    void *orig_xslt_error_cb = xsltGenericErrorContext;
+    xmlGenericErrorFunc orig_xml_error_func = xmlGenericError;
+    xmlGenericErrorFunc orig_xslt_error_func = xsltGenericError;
+    xmlSetGenericErrorFunc((void *) f, transform_error_xml_cb);
+    xsltSetGenericErrorFunc((void *) f, transform_error_xslt_cb);
 
     /* First Run of this Filter */
-    if (!ctxt) {
+    if (!ctxt)
+    {
         /* unset content-length */
         apr_table_unset(f->r->headers_out, "Content-Length");
-        if (f->r->filename) {
-            depends_add_file(f->r, f->r->filename);
+        if (f->r->filename)
+        {
+			#if HAVE_MOD_DEPENDS
+            	depends_add_file(f->r, f->r->filename);
+			#endif
         }
     }
 
@@ -380,7 +438,8 @@ static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
     {
         if (APR_BUCKET_IS_EOS(b))
         {
-            if (ctxt) {         /* done reading the file. run the transform now */
+            if (ctxt)
+            {         /* done reading the file. run the transform now */
                 xmlParseChunk(ctxt, buf, 0, 1);
                 ret = transform_run(f, ctxt->myDoc);
                 xmlFreeParserCtxt(ctxt);
@@ -402,11 +461,14 @@ static apr_status_t transform_filter(ap_filter_t * f, apr_bucket_brigade * bb)
     }
     apr_brigade_destroy(bb);
 
-    xmlSetGenericErrorFunc(orig_error_cb,  orig_error_func);
+    // Restore XML and XSL error functions.
+    xmlSetGenericErrorFunc(orig_xml_error_cb,  orig_xml_error_func);
+    xsltSetGenericErrorFunc(orig_xslt_error_cb,  orig_xslt_error_func);
 
     return ret;
 }
 
+/* Function to merge a directory configuration */
 static void *transform_merge_dir_config(apr_pool_t * p, void *basev, void *addv)
 {
     dir_cfg *from = basev;
@@ -416,7 +478,8 @@ static void *transform_merge_dir_config(apr_pool_t * p, void *basev, void *addv)
     to->xslt = (merge->xslt != 0) ? merge->xslt : from->xslt;
 
     /* This code comes from mod_autoindex's IndexOptions */
-    if (merge->opts & NO_OPTIONS) {
+    if (merge->opts & NO_OPTIONS)
+    {
         /*
          * If the current directory says 'no options' then we also
          * clear any incremental mods from being inheritable further down.
@@ -425,26 +488,26 @@ static void *transform_merge_dir_config(apr_pool_t * p, void *basev, void *addv)
         to->incremented_opts = 0;
         to->decremented_opts = 0;
     }
-    else {
+    else
+    {
         /*
          * If there were any nonincremental options selected for
          * this directory, they dominate and we don't inherit *anything.*
          * Contrariwise, we *do* inherit if the only settings here are
          * incremental ones.
          */
-        if (merge->opts == 0) {
-            to->incremented_opts = (from->incremented_opts
-                                    | merge->incremented_opts)
-                & ~merge->decremented_opts;
-            to->decremented_opts = (from->decremented_opts
-                                    | merge->decremented_opts);
+        if (merge->opts == 0)
+        {
+            to->incremented_opts = (from->incremented_opts | merge->incremented_opts) & ~merge->decremented_opts;
+            to->decremented_opts = (from->decremented_opts | merge->decremented_opts);
             /*
              * We may have incremental settings, so make sure we don't
              * inadvertently inherit an IndexOptions None from above.
              */
             to->opts = (from->opts & ~NO_OPTIONS);
         }
-        else {
+        else
+        {
             /*
              * There are local nonincremental settings, which clear
              * all inheritance from above.  They *are* the new base settings.
@@ -491,8 +554,7 @@ static const char *use_xslt(cmd_parms * cmd, void *cfg, const char *xslt)
 
 static int init_notes(request_rec * r)
 {
-    dir_cfg *conf = ap_get_module_config(r->per_dir_config,
-                                         &transform_module);
+    dir_cfg *conf = ap_get_module_config(r->per_dir_config, &transform_module);
     transform_notes *notes = apr_pcalloc(r->pool, sizeof(transform_notes));
     notes->xslt = conf->xslt;
 
@@ -512,55 +574,68 @@ static const char *add_opts(cmd_parms * cmd, void *d, const char *optstr)
     opts = d_cfg->opts;
     opts_add = d_cfg->incremented_opts;
     opts_remove = d_cfg->decremented_opts;
-    while (optstr[0]) {
+    while (optstr[0])
+    {
         int option = 0;
 
         w = ap_getword_conf(cmd->pool, &optstr);
 
-        if ((*w == '+') || (*w == '-')) {
+        if ((*w == '+') || (*w == '-'))
+        {
             action = *(w++);
         }
-        else {
+        else
+        {
             action = '\0';
         }
 
 
-        if (!strcasecmp(w, "ApacheFS")) {
+        if (!strcasecmp(w, "ApacheFS"))
+        {
             option = USE_APACHE_FS;
         }
-        else if (!strcasecmp(w, "XIncludes")) {
+        else if (!strcasecmp(w, "XIncludes"))
+        {
             option = XINCLUDES;
         }
-        else if (!strcasecmp(w, "PreventRecursion")) {
+        else if (!strcasecmp(w, "PreventRecursion"))
+        {
             option = PREVENT_RECURSION;
         }
-        else if (!strcasecmp(w, "None")) {
-            if (action != '\0') {
+        else if (!strcasecmp(w, "None"))
+        {
+            if (action != '\0')
+            {
                 return "Cannot combine '+' or '-' with 'None' keyword";
             }
             opts = NO_OPTIONS;
             opts_add = 0;
             opts_remove = 0;
         }
-        else {
+        else
+        {
             return "Invalid TransformOption";
         }
 
-        if (action == '\0') {
+        if (action == '\0')
+        {
             opts |= option;
             opts_add = 0;
             opts_remove = 0;
         }
-        else if (action == '+') {
+        else if (action == '+')
+        {
             opts_add |= option;
             opts_remove &= ~option;
         }
-        else {
+        else
+        {
             opts_remove |= option;
             opts_add &= ~option;
         }
     }
-    if ((opts & NO_OPTIONS) && (opts & ~NO_OPTIONS)) {
+    if ((opts & NO_OPTIONS) && (opts & ~NO_OPTIONS))
+    {
         return "Cannot combine other TransformOptions keywords with 'None'";
     }
     d_cfg->incremented_opts = opts_add;
@@ -581,9 +656,7 @@ static void transform_child_init(apr_pool_t *p, server_rec *s)
     exsltRegisterAll();
 
     // Register mod_transform XSLT functions
-    xsltRegisterExtModuleFunction ((const xmlChar *) "get",
-                    TRANSFORM_APACHE_NAMESPACE,
-                    transformApacheGetFunction);
+    xsltRegisterExtModuleFunction ((const xmlChar *) "get", TRANSFORM_APACHE_NAMESPACE, transformApacheGetFunction);
 
     /* mod_transform plugin hook into child_init */
     {
@@ -597,15 +670,14 @@ static void transform_child_init(apr_pool_t *p, server_rec *s)
     }
 }
 
-static const char *set_announce(cmd_parms *cmd, 
-					   void *struct_ptr, 
-					   int arg)
+static const char *set_announce(cmd_parms *cmd, void *struct_ptr, int arg)
 {
     svr_cfg *cfg = ap_get_module_config(cmd->server->module_config,
 			&transform_module);
 
     const char *err = ap_check_cmd_context(cmd,NOT_IN_DIR_LOC_FILE|NOT_IN_LIMIT);
-    if (err) {
+    if (err)
+    {
         return err;
     }
     cfg->announce = arg ? 1 : 0;
@@ -613,17 +685,20 @@ static const char *set_announce(cmd_parms *cmd,
     return NULL;
 }
 
-static const char **build_args(apr_pool_t *pool, const char *line, int *argc) {
+static const char **build_args(apr_pool_t *pool, const char *line, int *argc)
+{
     char *args[512];
     char *word;
     int count;
 
     count = 0;
 
-    while (line[0]) {
+    while (line[0])
+    {
         word = ap_getword_conf(pool, &line);
+
+        /* too many args. cut here off - this is pretty ugly, and yet, unusual to exceed the limit as well */
         if (count == (sizeof(args) / sizeof(*args)))
-            /* too many args. cut here off - this is pretty ugly, and yet, unusual to exceed the limit as well */
             break;
 
         args[count++] = word;
@@ -667,7 +742,8 @@ static const char *transform_load_plugin(cmd_parms *cmd, void *cfg, const char *
         pluginRecord = apr_psprintf(cmd->pool, "_%s", pluginRecord);
 
     apr_status_t rv = apr_dso_load(&pluginInfo->handle, pluginFileName, cmd->pool);
-    if (rv != 0) {
+    if (rv != 0)
+    {
         static char errorMsg[256];
 
         return apr_dso_error(pluginInfo->handle, errorMsg, sizeof(errorMsg));
@@ -694,17 +770,17 @@ static const char *transform_load_plugin(cmd_parms *cmd, void *cfg, const char *
     return NULL;
 }
 
-static int transform_post_config(apr_pool_t *p, apr_pool_t *log, apr_pool_t *ptemp,
-					server_rec *s)
+static int transform_post_config(apr_pool_t *p, apr_pool_t *log, apr_pool_t *ptemp, server_rec *s)
 {
-    svr_cfg *cfg = ap_get_module_config(s->module_config,
-					&transform_module);
+    svr_cfg *cfg = ap_get_module_config(s->module_config, &transform_module);
 
     /* Add version string to Apache headers */
-    if (cfg->announce) {
+    if (cfg->announce)
+    {
         char *compinfo = PACKAGE_NAME "/" PACKAGE_VERSION;
 
-        if (cfg->plugins) {
+        if (cfg->plugins)
+        {
             char *pinfos = (char *)cfg->plugins->name;
             transform_plugin_info_t *pinfo;
 
@@ -743,34 +819,29 @@ static void transform_hooks(apr_pool_t * p)
 
     ap_hook_post_read_request(init_notes, NULL, NULL, APR_HOOK_MIDDLE);
 
-    ap_register_output_filter(XSLT_FILTER_NAME, transform_filter, transform_filter_init,
-                              AP_FTYPE_RESOURCE);
-    ap_register_output_filter(APACHEFS_FILTER_NAME, transform_apachefs_filter, NULL,
-                              AP_FTYPE_RESOURCE);
+    ap_register_output_filter(XSLT_FILTER_NAME, transform_filter, transform_filter_init, AP_FTYPE_RESOURCE);
+
+    ap_register_output_filter(APACHEFS_FILTER_NAME, transform_apachefs_filter, NULL, AP_FTYPE_RESOURCE);
 
 };
 
-static const command_rec transform_cmds[] = {
+static const command_rec transform_cmds[] =
+{
+    AP_INIT_TAKE1("TransformSet", use_xslt, NULL, OR_ALL, "Stylesheet to use"),
 
-    AP_INIT_TAKE1("TransformSet", use_xslt, NULL, OR_ALL,
-                  "Stylesheet to use"),
+    AP_INIT_TAKE2("TransformCache", transform_cache_add, NULL, RSRC_CONF, "URL and Path for stylesheet to preload"),
 
-    AP_INIT_TAKE2("TransformCache", transform_cache_add, NULL, RSRC_CONF,
-                  "URL and Path for stylesheet to preload"),
+    AP_INIT_RAW_ARGS("TransformOptions", add_opts, NULL, OR_INDEXES, "one or more index options [+|-][]"),
 
-    AP_INIT_RAW_ARGS("TransformOptions", add_opts, NULL, OR_INDEXES,
-                     "one or more index options [+|-][]"),
+    AP_INIT_FLAG("TransformAnnounce", set_announce, NULL, RSRC_CONF, "Whether to announce this module in the server header. Default: On"),
 
-    AP_INIT_FLAG("TransformAnnounce", set_announce, NULL, RSRC_CONF,
-                 "Whether to announce this module in the server header. Default: On"),
-
-    AP_INIT_RAW_ARGS("TransformLoadPlugin", transform_load_plugin, NULL, RSRC_CONF,
-                  "Loads a plugin at given location."),
+    AP_INIT_RAW_ARGS("TransformLoadPlugin", transform_load_plugin, NULL, RSRC_CONF, "Loads a plugin at given location."),
 
     {NULL}
 };
 
-module AP_MODULE_DECLARE_DATA transform_module = {
+module AP_MODULE_DECLARE_DATA transform_module =
+{
     STANDARD20_MODULE_STUFF,
     transform_create_dir_config,
     transform_merge_dir_config,
@@ -784,17 +855,12 @@ module AP_MODULE_DECLARE_DATA transform_module = {
 
 void mod_transform_set_XSLT(request_rec * r, const char *name)
 {
-    transform_notes *notes = ap_get_module_config(r->request_config,
-                                               &transform_module);
+    transform_notes *notes = ap_get_module_config(r->request_config, &transform_module);
     notes->xslt = apr_pstrdup(r->pool, name);
 }
 
 void mod_transform_XSLTDoc(request_rec * r, xmlDocPtr doc)
 {
-    transform_notes *notes = ap_get_module_config(r->request_config,
-                                               &transform_module);
+    transform_notes *notes = ap_get_module_config(r->request_config, &transform_module);
     notes->document = doc;
 }
-
-/* vim:ai:et:ts=4:nowrap
- */
